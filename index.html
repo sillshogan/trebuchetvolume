@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trebuchet Volume Bar</title>
+  <style>
+    :root{
+      --bg:#0b1020;
+      --panel:#111a33;
+      --ink:#e8ecff;
+      --muted:#9aa6d6;
+      --bar:#2a3566;
+      --barFill:#7aa2ff;
+      --accent:#ffd166;
+      --danger:#ff5c7a;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: radial-gradient(1200px 800px at 40% -20%, #1a2a6b33, transparent 60%),
+                  radial-gradient(900px 600px at 110% 10%, #ff5c7a22, transparent 55%),
+                  var(--bg);
+      color:var(--ink);
+      min-height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:24px;
+    }
+    .wrap{
+      width:min(1000px, 100%);
+      display:grid;
+      gap:16px;
+    }
+    .top{
+      display:flex;
+      gap:12px;
+      align-items:baseline;
+      justify-content:space-between;
+      flex-wrap:wrap;
+    }
+    h1{
+      font-size: clamp(20px, 3vw, 28px);
+      margin:0;
+      letter-spacing:0.2px;
+    }
+    .sub{
+      color:var(--muted);
+      font-size:14px;
+      margin:0;
+    }
+    .panel{
+      background: linear-gradient(180deg, #111a33, #0e1630);
+      border: 1px solid #233063;
+      border-radius: 18px;
+      box-shadow: 0 18px 40px #00000055;
+      overflow:hidden;
+    }
+    .row{
+      display:grid;
+      grid-template-columns: 1fr;
+    }
+    canvas{
+      display:block;
+      width:100%;
+      height:auto;
+      aspect-ratio: 16 / 7;
+      background: radial-gradient(800px 500px at 40% 10%, #22336a55, transparent 60%),
+                  radial-gradient(600px 450px at 90% 30%, #ff5c7a22, transparent 60%),
+                  linear-gradient(180deg, #0b1020, #070b16);
+    }
+    .controls{
+      display:flex;
+      gap:12px;
+      align-items:center;
+      justify-content:space-between;
+      padding:14px 16px;
+      border-top:1px solid #233063;
+      flex-wrap:wrap;
+    }
+    .pill{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      padding:10px 12px;
+      background:#0b1020aa;
+      border:1px solid #233063;
+      border-radius:999px;
+    }
+    .pill b{font-variant-numeric: tabular-nums;}
+    .btn{
+      appearance:none;
+      border:1px solid #2a3566;
+      background:#0b1020;
+      color:var(--ink);
+      padding:10px 12px;
+      border-radius:12px;
+      cursor:pointer;
+      transition: transform .06s ease, background .2s ease;
+    }
+    .btn:hover{background:#0f1630}
+    .btn:active{transform: translateY(1px)}
+    .btn.primary{border-color:#3b55aa;background:#11204a}
+    .btn.primary:hover{background:#15275a}
+    .hint{
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.35;
+      padding: 0 16px 14px 16px;
+    }
+    .hint code{background:#0b1020aa;border:1px solid #233063;padding:2px 6px;border-radius:8px}
+    .sr-only{position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <h1>Trebuchet Volume Bar</h1>
+        <p class="sub">Pull back the arm → release to launch → the cannonball impact sets the volume.</p>
+      </div>
+      <div class="pill" aria-live="polite">
+        <span>Volume</span>
+        <b id="volText">0.50</b>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="row">
+        <canvas id="c" width="1200" height="525" aria-label="Trebuchet volume control" role="img"></canvas>
+      </div>
+      <div class="controls">
+        <div class="pill">
+          <span>Sound</span>
+          <button class="btn primary" id="toggleAudio" type="button">Start</button>
+          <span class="sub" id="audioState">(silent until started)</span>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <button class="btn" id="reset" type="button">Reset shot</button>
+          <button class="btn" id="center" type="button">Shoot to 50%</button>
+        </div>
+      </div>
+      <div class="hint">
+        <div><b>How it works:</b> drag near the rope/hand on the trebuchet arm to pull back. Release to fire.</div>
+        <div>Tip: bigger pullback = faster shot. The volume updates when the cannonball crosses the bar.</div>
+      </div>
+    </div>
+
+    <div class="sr-only" id="a11y">Trebuchet volume control. Drag to pull back and release to set volume.</div>
+  </div>
+
+  <script>
+    // --- Simple trebuchet + physics volume setter ---
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const volText = document.getElementById('volText');
+
+    // Audio demo: an oscillator controlled by gain (volume)
+    let audioCtx = null, osc = null, gain = null;
+    const toggleBtn = document.getElementById('toggleAudio');
+    const audioState = document.getElementById('audioState');
+
+    function setVolume(v){
+      v = Math.max(0, Math.min(1, v));
+      state.volume = v;
+      volText.textContent = v.toFixed(2);
+      if(gain) gain.gain.value = v;
+    }
+
+    async function startAudio(){
+      if(audioCtx) return;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      gain = audioCtx.createGain();
+      osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = 220;
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      setVolume(state.volume);
+      osc.start();
+    }
+
+    function stopAudio(){
+      if(!audioCtx) return;
+      try{ osc.stop(); }catch{}
+      osc = null;
+      gain = null;
+      audioCtx.close();
+      audioCtx = null;
+    }
+
+    toggleBtn.addEventListener('click', async ()=>{
+      if(!audioCtx){
+        await startAudio();
+        toggleBtn.textContent = 'Stop';
+        audioState.textContent = '(playing tone)';
+      } else {
+        stopAudio();
+        toggleBtn.textContent = 'Start';
+        audioState.textContent = '(silent until started)';
+      }
+    });
+
+    // Resize for crispness
+    function fitCanvas(){
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const cssW = canvas.clientWidth;
+      const cssH = canvas.clientHeight;
+      canvas.width = Math.round(cssW * dpr);
+      canvas.height = Math.round(cssH * dpr);
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+    window.addEventListener('resize', ()=>{fitCanvas();});
+
+    // World geometry in CSS pixels (we draw with 1 unit = 1 CSS px via setTransform above)
+    const state = {
+      volume: 0.50,
+      dragging: false,
+      fired: false,
+      impacted: false,
+      // Trebuchet anchor point
+      base: {x: 150, y: 380},
+      pivot: {x: 210, y: 270},
+      armLen: 170,
+      slingLen: 70,
+      // Arm angle (radians). 0 points right; negative points up.
+      armAngle: -0.15,
+      restAngle: -0.15,
+      pullAngle: -1.25,
+      // Ball physics
+      ball: {x: 0, y: 0, vx: 0, vy: 0, r: 10},
+      gravity: 900, // px/s^2
+      lastT: 0,
+      // Volume bar
+      bar: {x: 300, y: 115, w: 820, h: 22},
+      // For aim indicator
+      targetX: null,
+    };
+
+    // Initialize ball at sling end
+    function placeBallAtSling(){
+      const hand = armHandPos();
+      const sling = slingEndPos(hand);
+      state.ball.x = sling.x;
+      state.ball.y = sling.y;
+      state.ball.vx = 0;
+      state.ball.vy = 0;
+    }
+
+    function armHandPos(){
+      const a = state.armAngle;
+      return {
+        x: state.pivot.x + Math.cos(a) * state.armLen,
+        y: state.pivot.y + Math.sin(a) * state.armLen,
+      };
+    }
+
+    function slingEndPos(hand){
+      // Sling hangs downward-ish from hand, but during pull we keep it aligned with a small offset
+      // For simplicity, tether it at a fixed angle relative to vertical.
+      const sAng = Math.PI/2 + (state.armAngle * 0.25);
+      return {
+        x: hand.x + Math.cos(sAng) * state.slingLen,
+        y: hand.y + Math.sin(sAng) * state.slingLen,
+      };
+    }
+
+    function resetShot(){
+      state.fired = false;
+      state.impacted = false;
+      state.targetX = null;
+      state.armAngle = state.restAngle;
+      placeBallAtSling();
+    }
+
+    document.getElementById('reset').addEventListener('click', resetShot);
+    document.getElementById('center').addEventListener('click', ()=>{
+      // Fake a shot toward the middle by launching a gentle arc.
+      if(state.fired) resetShot();
+      state.fired = true;
+      state.impacted = false;
+      const target = state.bar.x + state.bar.w * 0.5;
+      state.targetX = target;
+      // Choose velocity that roughly reaches the target
+      const start = {x: state.ball.x, y: state.ball.y};
+      const dx = target - start.x;
+      const dy = (state.bar.y + state.bar.h/2) - start.y;
+      const t = Math.max(0.65, Math.min(1.1, Math.abs(dx)/600));
+      state.ball.vx = dx / t;
+      state.ball.vy = (dy - 0.5*state.gravity*t*t) / t;
+    });
+
+    // Pointer helpers
+    function getPointer(e){
+      const r = canvas.getBoundingClientRect();
+      return {x: e.clientX - r.left, y: e.clientY - r.top};
+    }
+
+    function dist(a,b){
+      const dx=a.x-b.x, dy=a.y-b.y;
+      return Math.hypot(dx,dy);
+    }
+
+    // Interaction: drag near the sling/hand to pull back
+    canvas.addEventListener('pointerdown', (e)=>{
+      if(state.fired) return;
+      canvas.setPointerCapture(e.pointerId);
+      const p = getPointer(e);
+      const hand = armHandPos();
+      const sling = slingEndPos(hand);
+      const grabPoint = {x: (hand.x + sling.x)/2, y: (hand.y + sling.y)/2};
+      if(dist(p, grabPoint) < 55){
+        state.dragging = true;
+        state.dragStart = p;
+      }
+    });
+
+    canvas.addEventListener('pointermove', (e)=>{
+      const p = getPointer(e);
+      state.pointer = p;
+      if(!state.dragging || state.fired) return;
+      // Map horizontal pullback to arm angle
+      const pull = Math.max(0, Math.min(1, (state.pivot.x - p.x) / 220));
+      state.armAngle = state.restAngle + (state.pullAngle - state.restAngle) * pull;
+      placeBallAtSling();
+    });
+
+    canvas.addEventListener('pointerup', (e)=>{
+      if(!state.dragging || state.fired) return;
+      state.dragging = false;
+      // Launch based on how far we pulled
+      const pullAmt = (state.restAngle - state.armAngle) / (state.restAngle - state.pullAngle);
+      const power = Math.max(0.05, Math.min(1, pullAmt));
+
+      // Release arm snaps forward quickly (visual only); we just compute initial velocity.
+      // Aim mostly toward the volume bar.
+      const hand = armHandPos();
+      const sling = slingEndPos(hand);
+      const start = {x: sling.x, y: sling.y};
+
+      // Initial direction: from pivot through hand (a bit upward)
+      const dirAng = state.armAngle + 0.55; // tweak for a nicer arc
+      const speed = 520 + 980 * power;
+
+      state.ball.x = start.x;
+      state.ball.y = start.y;
+      state.ball.vx = Math.cos(dirAng) * speed;
+      state.ball.vy = Math.sin(dirAng) * speed;
+
+      state.fired = true;
+      state.impacted = false;
+      state.targetX = null;
+
+      // Arm returns to rest
+      state.armAngle = state.restAngle;
+    });
+
+    // Drawing helpers
+    function roundRect(x,y,w,h,r){
+      const rr = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x+rr,y);
+      ctx.arcTo(x+w,y,x+w,y+h,rr);
+      ctx.arcTo(x+w,y+h,x,y+h,rr);
+      ctx.arcTo(x,y+h,x,y,rr);
+      ctx.arcTo(x,y,x+w,y,rr);
+      ctx.closePath();
+    }
+
+    function drawBar(){
+      const {x,y,w,h} = state.bar;
+      // track
+      ctx.save();
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bar').trim();
+      roundRect(x, y, w, h, 12);
+      ctx.fill();
+
+      // fill
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--barFill').trim();
+      roundRect(x, y, w * state.volume, h, 12);
+      ctx.fill();
+
+      // ticks
+      ctx.globalAlpha = 0.25;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      for(let i=0;i<=10;i++){
+        const tx = x + (w*i/10);
+        ctx.beginPath();
+        ctx.moveTo(tx, y+h+6);
+        ctx.lineTo(tx, y+h+ (i%5===0?18:12));
+        ctx.stroke();
+      }
+
+      // knob indicator
+      ctx.globalAlpha = 1;
+      const kx = x + w * state.volume;
+      const ky = y + h/2;
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+      ctx.beginPath();
+      ctx.arc(kx, ky, 10, 0, Math.PI*2);
+      ctx.fill();
+
+      // label
+      ctx.fillStyle = '#e8ecff';
+      ctx.font = '600 14px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+      ctx.fillText('VOLUME', x, y-12);
+
+      ctx.restore();
+    }
+
+    function drawTrebuchet(){
+      const base = state.base;
+      const pivot = state.pivot;
+      const hand = armHandPos();
+      const sling = slingEndPos(hand);
+
+      ctx.save();
+      // Ground
+      ctx.globalAlpha = 0.45;
+      ctx.strokeStyle = '#2a3566';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, base.y+40);
+      ctx.lineTo(canvas.clientWidth, base.y+40);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      // Frame
+      ctx.strokeStyle = '#c2c9ff';
+      ctx.lineWidth = 6;
+      ctx.lineCap = 'round';
+
+      // Legs
+      ctx.beginPath();
+      ctx.moveTo(base.x, base.y);
+      ctx.lineTo(pivot.x-50, pivot.y+40);
+      ctx.lineTo(pivot.x, pivot.y);
+      ctx.lineTo(pivot.x+55, pivot.y+45);
+      ctx.lineTo(base.x+120, base.y);
+      ctx.stroke();
+
+      // Base beam
+      ctx.strokeStyle = '#a7b1ff';
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.moveTo(base.x-10, base.y);
+      ctx.lineTo(base.x+140, base.y);
+      ctx.stroke();
+
+      // Pivot joint
+      ctx.fillStyle = '#ffd166';
+      ctx.beginPath();
+      ctx.arc(pivot.x, pivot.y, 10, 0, Math.PI*2);
+      ctx.fill();
+
+      // Arm
+      ctx.strokeStyle = '#e8ecff';
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.moveTo(pivot.x, pivot.y);
+      ctx.lineTo(hand.x, hand.y);
+      ctx.stroke();
+
+      // Counterweight (simple block behind pivot)
+      const cwAng = state.armAngle - Math.PI + 0.2;
+      const cw = {
+        x: pivot.x + Math.cos(cwAng) * 55,
+        y: pivot.y + Math.sin(cwAng) * 55,
+      };
+      ctx.fillStyle = '#ff5c7a';
+      ctx.globalAlpha = 0.85;
+      roundRect(cw.x-18, cw.y-18, 36, 36, 10);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Sling/rope
+      ctx.strokeStyle = '#9aa6d6';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(hand.x, hand.y);
+      ctx.lineTo(sling.x, sling.y);
+      ctx.stroke();
+
+      // Grab handle hint
+      if(!state.fired){
+        const grab = {x:(hand.x+sling.x)/2, y:(hand.y+sling.y)/2};
+        ctx.fillStyle = 'rgba(255, 209, 102, 0.2)';
+        ctx.beginPath();
+        ctx.arc(grab.x, grab.y, 28, 0, Math.PI*2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 209, 102, 0.65)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(grab.x, grab.y, 28, 0, Math.PI*2);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+
+      return {hand, sling};
+    }
+
+    function drawBall(){
+      const b = state.ball;
+      ctx.save();
+      // Shadow
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(b.x, state.base.y+34, b.r*1.2, b.r*0.55, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Ball
+      const g = ctx.createRadialGradient(b.x-4, b.y-6, 3, b.x, b.y, b.r+8);
+      g.addColorStop(0, '#ffffff');
+      g.addColorStop(0.15, '#cfd6ff');
+      g.addColorStop(1, '#6b79b8');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+      ctx.fill();
+
+      // Outline
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function drawAiming(){
+      if(!state.pointer || state.fired) return;
+      // Subtle crosshair where the user is pointing on the bar
+      const p = state.pointer;
+      const {x,y,w,h} = state.bar;
+      if(p.x < x || p.x > x+w || p.y < y-50 || p.y > y+h+50) return;
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = '#ffd166';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(p.x, y-18);
+      ctx.lineTo(p.x, y+h+18);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function checkImpact(){
+      if(state.impacted) return;
+      const b = state.ball;
+      const {x,y,w,h} = state.bar;
+      // Check crossing the bar rectangle (expanded by ball radius)
+      const inX = (b.x >= x - b.r) && (b.x <= x + w + b.r);
+      const inY = (b.y >= y - b.r) && (b.y <= y + h + b.r);
+      if(inX && inY){
+        state.impacted = true;
+        const v = (b.x - x) / w;
+        setVolume(v);
+        // Small "bounce" feedback
+        state.ball.vx *= 0.3;
+        state.ball.vy *= -0.25;
+      }
+    }
+
+    function step(t){
+      if(!state.lastT) state.lastT = t;
+      const dt = Math.min(0.033, (t - state.lastT) / 1000);
+      state.lastT = t;
+
+      // If not fired, keep ball at sling
+      if(!state.fired){
+        placeBallAtSling();
+      } else {
+        // Integrate physics
+        state.ball.vy += state.gravity * dt;
+        state.ball.x += state.ball.vx * dt;
+        state.ball.y += state.ball.vy * dt;
+
+        // Bounds (ground)
+        const ground = state.base.y + 30;
+        if(state.ball.y + state.ball.r > ground){
+          state.ball.y = ground - state.ball.r;
+          state.ball.vy *= -0.45;
+          state.ball.vx *= 0.75;
+          if(Math.abs(state.ball.vy) < 40) state.ball.vy = 0;
+          if(Math.abs(state.ball.vx) < 20) state.ball.vx = 0;
+        }
+
+        // Side bounds (keep on-screen)
+        const maxX = canvas.clientWidth - 20;
+        if(state.ball.x < 20){ state.ball.x = 20; state.ball.vx *= -0.6; }
+        if(state.ball.x > maxX){ state.ball.x = maxX; state.ball.vx *= -0.6; }
+
+        checkImpact();
+      }
+
+      // Draw
+      ctx.clearRect(0,0,canvas.clientWidth, canvas.clientHeight);
+
+      // Sky dots
+      ctx.save();
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = '#ffffff';
+      for(let i=0;i<50;i++){
+        const sx = (i*97) % (canvas.clientWidth);
+        const sy = (i*53) % (canvas.clientHeight*0.45);
+        ctx.fillRect(sx, sy, 2, 2);
+      }
+      ctx.restore();
+
+      drawBar();
+      drawAiming();
+      drawTrebuchet();
+      drawBall();
+
+      // Status text
+      ctx.save();
+      ctx.fillStyle = 'rgba(232,236,255,0.85)';
+      ctx.font = '600 14px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+      const msg = !state.fired ? 'Pull the sling to arm the shot' : (state.impacted ? 'Impact set the volume' : 'Cannonball in flight…');
+      ctx.fillText(msg, 22, 28);
+      ctx.restore();
+
+      requestAnimationFrame(step);
+    }
+
+    // Init
+    setVolume(state.volume);
+    fitCanvas();
+    resetShot();
+    requestAnimationFrame(step);
+  </script>
+</body>
+</html>
