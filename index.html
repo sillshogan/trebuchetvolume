@@ -152,15 +152,15 @@
   </div>
 
   <script>
-    // --- Simple trebuchet + physics volume setter ---
+    // --- Trebuchet + physics volume setter + medieval flute background ---
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
     const volText = document.getElementById('volText');
 
-    // Audio: master gain controls volume + background "medieval flute" loop
+    // ===== Audio: medieval flute-ish background (synth) =====
     let audioCtx = null;
     let master = null;
-    let bg = { intervalId: null, nextNoteTime: 0, step: 0, tempo: 96 };
+    const bg = { intervalId: null, nextNoteTime: 0, step: 0, tempo: 96 };
 
     function setVolume(v){
       v = Math.max(0, Math.min(1, v));
@@ -170,42 +170,39 @@
     }
 
     function makeFluteVoice(t, freq, dur){
-      // Flute-ish: sine + light breath noise through bandpass, with vibrato
+      // Flute-ish: sine + filtered breath noise + vibrato + light delay
       const o = audioCtx.createOscillator();
       o.type = 'sine';
       o.frequency.setValueAtTime(freq, t);
 
-      // Vibrato
       const lfo = audioCtx.createOscillator();
       lfo.type = 'sine';
       lfo.frequency.setValueAtTime(5.2, t);
       const lfoGain = audioCtx.createGain();
-      lfoGain.gain.setValueAtTime(7, t); // cents-ish via Hz modulation at this range
+      lfoGain.gain.setValueAtTime(6.5, t);
       lfo.connect(lfoGain);
       lfoGain.connect(o.frequency);
 
-      // Breath noise
-      const noiseBuf = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * dur), audioCtx.sampleRate);
+      const noiseDur = Math.max(0.05, dur);
+      const noiseBuf = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * noiseDur), audioCtx.sampleRate);
       const data = noiseBuf.getChannelData(0);
-      for(let i=0;i<data.length;i++) data[i] = (Math.random()*2-1) * 0.35;
+      for(let i=0;i<data.length;i++) data[i] = (Math.random()*2-1) * 0.32;
       const noise = audioCtx.createBufferSource();
       noise.buffer = noiseBuf;
 
       const bp = audioCtx.createBiquadFilter();
       bp.type = 'bandpass';
-      bp.frequency.setValueAtTime(Math.max(700, Math.min(1800, freq*2.2)), t);
-      bp.Q.setValueAtTime(2.2, t);
+      bp.frequency.setValueAtTime(Math.max(650, Math.min(1900, freq*2.1)), t);
+      bp.Q.setValueAtTime(2.1, t);
 
       const vca = audioCtx.createGain();
-      // ADSR-ish envelope
-      const a = 0.02, d = 0.08, s = 0.55, r = Math.min(0.18, dur*0.35);
+      const a = 0.02, d = 0.09, s = 0.55, r = Math.min(0.18, dur*0.35);
       vca.gain.setValueAtTime(0.0001, t);
-      vca.gain.exponentialRampToValueAtTime(0.85, t + a);
-      vca.gain.exponentialRampToValueAtTime(0.85*s, t + a + d);
-      vca.gain.setValueAtTime(0.85*s, t + Math.max(0, dur - r));
+      vca.gain.exponentialRampToValueAtTime(0.9, t + a);
+      vca.gain.exponentialRampToValueAtTime(0.9*s, t + a + d);
+      vca.gain.setValueAtTime(0.9*s, t + Math.max(0, dur - r));
       vca.gain.exponentialRampToValueAtTime(0.0001, t + dur);
 
-      // Soft delay for medieval vibe
       const delay = audioCtx.createDelay(0.6);
       delay.delayTime.setValueAtTime(0.22, t);
       const fb = audioCtx.createGain();
@@ -213,7 +210,6 @@
       delay.connect(fb);
       fb.connect(delay);
 
-      // Mix
       const mix = audioCtx.createGain();
       mix.gain.setValueAtTime(0.9, t);
 
@@ -229,30 +225,27 @@
       o.start(t);
       noise.start(t);
       lfo.start(t);
-      const stopT = t + dur + 0.02;
+      const stopT = t + dur + 0.03;
       o.stop(stopT);
       noise.stop(stopT);
       lfo.stop(stopT);
     }
 
     function scheduleBackground(){
-      // D Dorian-ish scale (D E F G A B C)
+      // D Dorian-ish scale (D E F G A B C D)
       const scale = [293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25, 587.33];
-      // A short medieval-ish motif (steps refer to scale indices)
       const motif = [0,2,3,4,3,2,1,0, 0,1,2,3,2,1,0,0, 4,5,4,3,2,3,4,3];
-      const beats = 60 / bg.tempo;
+      const beat = 60 / bg.tempo;
 
       const now = audioCtx.currentTime;
-      const lookAhead = 0.18;
       const scheduleAhead = 0.7;
       if(bg.nextNoteTime < now) bg.nextNoteTime = now + 0.05;
 
       while(bg.nextNoteTime < now + scheduleAhead){
-        const step = motif[bg.step % motif.length];
-        const freq = scale[step];
-        // Mix durations for a simple dance feel
+        const idx = motif[bg.step % motif.length];
+        const freq = scale[idx];
         const isLong = (bg.step % 8 === 7) || (bg.step % 12 === 11);
-        const dur = (isLong ? 1.5 : 1.0) * beats;
+        const dur = (isLong ? 1.5 : 1.0) * beat;
         makeFluteVoice(bg.nextNoteTime, freq, dur * 0.92);
         bg.nextNoteTime += dur;
         bg.step++;
@@ -266,9 +259,8 @@
       master.gain.value = state.volume;
       master.connect(audioCtx.destination);
 
-      // Kick off scheduler
-      bg.nextNoteTime = audioCtx.currentTime + 0.08;
       bg.step = 0;
+      bg.nextNoteTime = audioCtx.currentTime + 0.08;
       bg.intervalId = setInterval(scheduleBackground, 100);
       scheduleBackground();
     }
@@ -283,6 +275,8 @@
       audioCtx = null;
     }
 
+    const toggleBtn = document.getElementById('toggleAudio');
+    const audioState = document.getElementById('audioState');
     toggleBtn.addEventListener('click', async ()=>{
       if(!audioCtx){
         await startAudio();
@@ -295,43 +289,49 @@
       }
     });
 
-    // Resize for crispness
+    // ===== Canvas sizing for crispness =====
     function fitCanvas(){
       const dpr = Math.max(1, window.devicePixelRatio || 1);
-      const cssW = canvas.clientWidth;
-      const cssH = canvas.clientHeight;
+      const cssW = canvas.clientWidth || 900;
+      const cssH = canvas.clientHeight || 450;
       canvas.width = Math.round(cssW * dpr);
       canvas.height = Math.round(cssH * dpr);
-      ctx.setTransform(dpr,0,0,dpr,0,0);
+      ctx.setTransform(dpr,0,0,dpr,0,0); // draw in CSS px
     }
-    window.addEventListener('resize', ()=>{fitCanvas();});
+    window.addEventListener('resize', fitCanvas);
 
-    // World geometry in CSS pixels (we draw with 1 unit = 1 CSS px via setTransform above)
+    // ===== World state (all in CSS px) =====
     const state = {
       volume: 0.50,
       dragging: false,
       fired: false,
       impacted: false,
-      // Trebuchet anchor point
       base: {x: 150, y: 380},
       pivot: {x: 210, y: 270},
       armLen: 170,
       slingLen: 70,
-      // Arm angle (radians). 0 points right; negative points up.
       armAngle: -0.15,
       restAngle: -0.15,
       pullAngle: -1.25,
-      // Ball physics
       ball: {x: 0, y: 0, vx: 0, vy: 0, r: 10},
-      gravity: 900, // px/s^2
+      gravity: 900,
       lastT: 0,
-      // Volume bar
       bar: {x: 300, y: 115, w: 820, h: 22},
-      // For aim indicator
-      targetX: null,
+      pointer: null,
     };
 
-    // Initialize ball at sling end
+    function armHandPos(){
+      const a = state.armAngle;
+      return { x: state.pivot.x + Math.cos(a) * state.armLen,
+               y: state.pivot.y + Math.sin(a) * state.armLen };
+    }
+
+    function slingEndPos(hand){
+      const sAng = Math.PI/2 + (state.armAngle * 0.25);
+      return { x: hand.x + Math.cos(sAng) * state.slingLen,
+               y: hand.y + Math.sin(sAng) * state.slingLen };
+    }
+
     function placeBallAtSling(){
       const hand = armHandPos();
       const sling = slingEndPos(hand);
@@ -341,41 +341,19 @@
       state.ball.vy = 0;
     }
 
-    function armHandPos(){
-      const a = state.armAngle;
-      return {
-        x: state.pivot.x + Math.cos(a) * state.armLen,
-        y: state.pivot.y + Math.sin(a) * state.armLen,
-      };
-    }
-
-    function slingEndPos(hand){
-      // Sling hangs downward-ish from hand, but during pull we keep it aligned with a small offset
-      // For simplicity, tether it at a fixed angle relative to vertical.
-      const sAng = Math.PI/2 + (state.armAngle * 0.25);
-      return {
-        x: hand.x + Math.cos(sAng) * state.slingLen,
-        y: hand.y + Math.sin(sAng) * state.slingLen,
-      };
-    }
-
     function resetShot(){
       state.fired = false;
       state.impacted = false;
-      state.targetX = null;
       state.armAngle = state.restAngle;
       placeBallAtSling();
     }
 
     document.getElementById('reset').addEventListener('click', resetShot);
     document.getElementById('center').addEventListener('click', ()=>{
-      // Fake a shot toward the middle by launching a gentle arc.
       if(state.fired) resetShot();
       state.fired = true;
       state.impacted = false;
       const target = state.bar.x + state.bar.w * 0.5;
-      state.targetX = target;
-      // Choose velocity that roughly reaches the target
       const start = {x: state.ball.x, y: state.ball.y};
       const dx = target - start.x;
       const dy = (state.bar.y + state.bar.h/2) - start.y;
@@ -384,18 +362,16 @@
       state.ball.vy = (dy - 0.5*state.gravity*t*t) / t;
     });
 
-    // Pointer helpers
     function getPointer(e){
       const r = canvas.getBoundingClientRect();
       return {x: e.clientX - r.left, y: e.clientY - r.top};
     }
 
     function dist(a,b){
-      const dx=a.x-b.x, dy=a.y-b.y;
-      return Math.hypot(dx,dy);
+      return Math.hypot(a.x-b.x, a.y-b.y);
     }
 
-    // Interaction: drag near the sling/hand to pull back
+    // ===== Interaction: easier pull to 100% =====
     canvas.addEventListener('pointerdown', (e)=>{
       if(state.fired) return;
       canvas.setPointerCapture(e.pointerId);
@@ -405,7 +381,6 @@
       const grabPoint = {x: (hand.x + sling.x)/2, y: (hand.y + sling.y)/2};
       if(dist(p, grabPoint) < 78){
         state.dragging = true;
-        state.dragStart = p;
       }
     });
 
@@ -413,31 +388,28 @@
       const p = getPointer(e);
       state.pointer = p;
       if(!state.dragging || state.fired) return;
-      // Map pullback to arm angle (easier to reach 100% preload)
-      // Use both horizontal (left drag) and vertical (down drag) to accumulate pull.
+
+      // Use left drag AND down drag to accumulate pull.
       const dx = Math.max(0, (state.pivot.x - p.x));
       const dy = Math.max(0, (p.y - state.pivot.y));
-      // Smaller denominators => easier to hit 1.0
       const pull = Math.max(0, Math.min(1, (dx/130) * 0.75 + (dy/170) * 0.45));
+
       state.armAngle = state.restAngle + (state.pullAngle - state.restAngle) * pull;
       placeBallAtSling();
     });
 
-    canvas.addEventListener('pointerup', (e)=>{
+    canvas.addEventListener('pointerup', ()=>{
       if(!state.dragging || state.fired) return;
       state.dragging = false;
-      // Launch based on how far we pulled
+
       const pullAmt = (state.restAngle - state.armAngle) / (state.restAngle - state.pullAngle);
       const power = Math.max(0.05, Math.min(1, pullAmt));
 
-      // Release arm snaps forward quickly (visual only); we just compute initial velocity.
-      // Aim mostly toward the volume bar.
       const hand = armHandPos();
       const sling = slingEndPos(hand);
       const start = {x: sling.x, y: sling.y};
 
-      // Initial direction: from pivot through hand (a bit upward)
-      const dirAng = state.armAngle + 0.55; // tweak for a nicer arc
+      const dirAng = state.armAngle + 0.55;
       const speed = 520 + 980 * power;
 
       state.ball.x = start.x;
@@ -447,13 +419,10 @@
 
       state.fired = true;
       state.impacted = false;
-      state.targetX = null;
-
-      // Arm returns to rest
       state.armAngle = state.restAngle;
     });
 
-    // Drawing helpers
+    // ===== Drawing =====
     function roundRect(x,y,w,h,r){
       const rr = Math.min(r, w/2, h/2);
       ctx.beginPath();
@@ -467,19 +436,16 @@
 
     function drawBar(){
       const {x,y,w,h} = state.bar;
-      // track
       ctx.save();
       ctx.globalAlpha = 0.95;
       ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bar').trim();
       roundRect(x, y, w, h, 12);
       ctx.fill();
 
-      // fill
       ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--barFill').trim();
       roundRect(x, y, w * state.volume, h, 12);
       ctx.fill();
 
-      // ticks
       ctx.globalAlpha = 0.25;
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 1;
@@ -491,7 +457,6 @@
         ctx.stroke();
       }
 
-      // knob indicator
       ctx.globalAlpha = 1;
       const kx = x + w * state.volume;
       const ky = y + h/2;
@@ -500,11 +465,9 @@
       ctx.arc(kx, ky, 10, 0, Math.PI*2);
       ctx.fill();
 
-      // label
       ctx.fillStyle = '#e8ecff';
       ctx.font = '600 14px system-ui, -apple-system, Segoe UI, Roboto, Arial';
       ctx.fillText('VOLUME', x, y-12);
-
       ctx.restore();
     }
 
@@ -515,22 +478,21 @@
       const sling = slingEndPos(hand);
 
       ctx.save();
-      // Ground
+      // ground
       ctx.globalAlpha = 0.45;
       ctx.strokeStyle = '#2a3566';
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.moveTo(0, base.y+40);
-      ctx.lineTo(canvas.clientWidth, base.y+40);
+      ctx.lineTo(canvas.clientWidth || 1000, base.y+40);
       ctx.stroke();
       ctx.globalAlpha = 1;
 
-      // Frame
+      // frame
       ctx.strokeStyle = '#c2c9ff';
       ctx.lineWidth = 6;
       ctx.lineCap = 'round';
 
-      // Legs
       ctx.beginPath();
       ctx.moveTo(base.x, base.y);
       ctx.lineTo(pivot.x-50, pivot.y+40);
@@ -539,7 +501,6 @@
       ctx.lineTo(base.x+120, base.y);
       ctx.stroke();
 
-      // Base beam
       ctx.strokeStyle = '#a7b1ff';
       ctx.lineWidth = 8;
       ctx.beginPath();
@@ -547,13 +508,13 @@
       ctx.lineTo(base.x+140, base.y);
       ctx.stroke();
 
-      // Pivot joint
+      // pivot
       ctx.fillStyle = '#ffd166';
       ctx.beginPath();
       ctx.arc(pivot.x, pivot.y, 10, 0, Math.PI*2);
       ctx.fill();
 
-      // Arm
+      // arm
       ctx.strokeStyle = '#e8ecff';
       ctx.lineWidth = 8;
       ctx.beginPath();
@@ -561,19 +522,17 @@
       ctx.lineTo(hand.x, hand.y);
       ctx.stroke();
 
-      // Counterweight (simple block behind pivot)
+      // counterweight
       const cwAng = state.armAngle - Math.PI + 0.2;
-      const cw = {
-        x: pivot.x + Math.cos(cwAng) * 55,
-        y: pivot.y + Math.sin(cwAng) * 55,
-      };
+      const cw = { x: pivot.x + Math.cos(cwAng) * 55,
+                   y: pivot.y + Math.sin(cwAng) * 55 };
       ctx.fillStyle = '#ff5c7a';
       ctx.globalAlpha = 0.85;
       roundRect(cw.x-18, cw.y-18, 36, 36, 10);
       ctx.fill();
       ctx.globalAlpha = 1;
 
-      // Sling/rope
+      // sling
       ctx.strokeStyle = '#9aa6d6';
       ctx.lineWidth = 3;
       ctx.beginPath();
@@ -581,7 +540,7 @@
       ctx.lineTo(sling.x, sling.y);
       ctx.stroke();
 
-      // Grab handle hint
+      // grab hint
       if(!state.fired){
         const grab = {x:(hand.x+sling.x)/2, y:(hand.y+sling.y)/2};
         ctx.fillStyle = 'rgba(255, 209, 102, 0.2)';
@@ -596,14 +555,11 @@
       }
 
       ctx.restore();
-
-      return {hand, sling};
     }
 
     function drawBall(){
       const b = state.ball;
       ctx.save();
-      // Shadow
       ctx.globalAlpha = 0.22;
       ctx.fillStyle = '#000';
       ctx.beginPath();
@@ -611,7 +567,6 @@
       ctx.fill();
       ctx.globalAlpha = 1;
 
-      // Ball
       const g = ctx.createRadialGradient(b.x-4, b.y-6, 3, b.x, b.y, b.r+8);
       g.addColorStop(0, '#ffffff');
       g.addColorStop(0.15, '#cfd6ff');
@@ -621,17 +576,14 @@
       ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
       ctx.fill();
 
-      // Outline
       ctx.strokeStyle = 'rgba(255,255,255,0.25)';
       ctx.lineWidth = 2;
       ctx.stroke();
-
       ctx.restore();
     }
 
     function drawAiming(){
       if(!state.pointer || state.fired) return;
-      // Subtle crosshair where the user is pointing on the bar
       const p = state.pointer;
       const {x,y,w,h} = state.bar;
       if(p.x < x || p.x > x+w || p.y < y-50 || p.y > y+h+50) return;
@@ -650,14 +602,12 @@
       if(state.impacted) return;
       const b = state.ball;
       const {x,y,w,h} = state.bar;
-      // Check crossing the bar rectangle (expanded by ball radius)
       const inX = (b.x >= x - b.r) && (b.x <= x + w + b.r);
       const inY = (b.y >= y - b.r) && (b.y <= y + h + b.r);
       if(inX && inY){
         state.impacted = true;
         const v = (b.x - x) / w;
         setVolume(v);
-        // Small "bounce" feedback
         state.ball.vx *= 0.3;
         state.ball.vy *= -0.25;
       }
@@ -668,16 +618,13 @@
       const dt = Math.min(0.033, (t - state.lastT) / 1000);
       state.lastT = t;
 
-      // If not fired, keep ball at sling
       if(!state.fired){
         placeBallAtSling();
       } else {
-        // Integrate physics
         state.ball.vy += state.gravity * dt;
         state.ball.x += state.ball.vx * dt;
         state.ball.y += state.ball.vy * dt;
 
-        // Bounds (ground)
         const ground = state.base.y + 30;
         if(state.ball.y + state.ball.r > ground){
           state.ball.y = ground - state.ball.r;
@@ -687,24 +634,24 @@
           if(Math.abs(state.ball.vx) < 20) state.ball.vx = 0;
         }
 
-        // Side bounds (keep on-screen)
-        const maxX = canvas.clientWidth - 20;
+        const maxX = (canvas.clientWidth || 1000) - 20;
         if(state.ball.x < 20){ state.ball.x = 20; state.ball.vx *= -0.6; }
         if(state.ball.x > maxX){ state.ball.x = maxX; state.ball.vx *= -0.6; }
 
         checkImpact();
       }
 
-      // Draw
-      ctx.clearRect(0,0,canvas.clientWidth, canvas.clientHeight);
+      // draw
+      ctx.clearRect(0,0,canvas.clientWidth || 1000, canvas.clientHeight || 600);
 
-      // Sky dots
       ctx.save();
       ctx.globalAlpha = 0.25;
       ctx.fillStyle = '#ffffff';
+      const w = canvas.clientWidth || 1000;
+      const h = canvas.clientHeight || 600;
       for(let i=0;i<50;i++){
-        const sx = (i*97) % (canvas.clientWidth);
-        const sy = (i*53) % (canvas.clientHeight*0.45);
+        const sx = (i*97) % w;
+        const sy = (i*53) % (h*0.45);
         ctx.fillRect(sx, sy, 2, 2);
       }
       ctx.restore();
@@ -714,7 +661,6 @@
       drawTrebuchet();
       drawBall();
 
-      // Status text
       ctx.save();
       ctx.fillStyle = 'rgba(232,236,255,0.85)';
       ctx.font = '600 14px system-ui, -apple-system, Segoe UI, Roboto, Arial';
@@ -725,9 +671,9 @@
       requestAnimationFrame(step);
     }
 
-    // Init
-    setVolume(state.volume);
+    // init
     fitCanvas();
+    setVolume(state.volume);
     resetShot();
     requestAnimationFrame(step);
   </script>
