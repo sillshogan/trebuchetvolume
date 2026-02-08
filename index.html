@@ -157,36 +157,128 @@
     const ctx = canvas.getContext('2d');
     const volText = document.getElementById('volText');
 
-    // Audio demo: an oscillator controlled by gain (volume)
-    let audioCtx = null, osc = null, gain = null;
-    const toggleBtn = document.getElementById('toggleAudio');
-    const audioState = document.getElementById('audioState');
+    // Audio: master gain controls volume + background "medieval flute" loop
+    let audioCtx = null;
+    let master = null;
+    let bg = { intervalId: null, nextNoteTime: 0, step: 0, tempo: 96 };
 
     function setVolume(v){
       v = Math.max(0, Math.min(1, v));
       state.volume = v;
       volText.textContent = v.toFixed(2);
-      if(gain) gain.gain.value = v;
+      if(master) master.gain.value = v;
+    }
+
+    function makeFluteVoice(t, freq, dur){
+      // Flute-ish: sine + light breath noise through bandpass, with vibrato
+      const o = audioCtx.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(freq, t);
+
+      // Vibrato
+      const lfo = audioCtx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(5.2, t);
+      const lfoGain = audioCtx.createGain();
+      lfoGain.gain.setValueAtTime(7, t); // cents-ish via Hz modulation at this range
+      lfo.connect(lfoGain);
+      lfoGain.connect(o.frequency);
+
+      // Breath noise
+      const noiseBuf = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * dur), audioCtx.sampleRate);
+      const data = noiseBuf.getChannelData(0);
+      for(let i=0;i<data.length;i++) data[i] = (Math.random()*2-1) * 0.35;
+      const noise = audioCtx.createBufferSource();
+      noise.buffer = noiseBuf;
+
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(Math.max(700, Math.min(1800, freq*2.2)), t);
+      bp.Q.setValueAtTime(2.2, t);
+
+      const vca = audioCtx.createGain();
+      // ADSR-ish envelope
+      const a = 0.02, d = 0.08, s = 0.55, r = Math.min(0.18, dur*0.35);
+      vca.gain.setValueAtTime(0.0001, t);
+      vca.gain.exponentialRampToValueAtTime(0.85, t + a);
+      vca.gain.exponentialRampToValueAtTime(0.85*s, t + a + d);
+      vca.gain.setValueAtTime(0.85*s, t + Math.max(0, dur - r));
+      vca.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+      // Soft delay for medieval vibe
+      const delay = audioCtx.createDelay(0.6);
+      delay.delayTime.setValueAtTime(0.22, t);
+      const fb = audioCtx.createGain();
+      fb.gain.setValueAtTime(0.26, t);
+      delay.connect(fb);
+      fb.connect(delay);
+
+      // Mix
+      const mix = audioCtx.createGain();
+      mix.gain.setValueAtTime(0.9, t);
+
+      o.connect(vca);
+      noise.connect(bp);
+      bp.connect(vca);
+
+      vca.connect(mix);
+      mix.connect(master);
+      mix.connect(delay);
+      delay.connect(master);
+
+      o.start(t);
+      noise.start(t);
+      lfo.start(t);
+      const stopT = t + dur + 0.02;
+      o.stop(stopT);
+      noise.stop(stopT);
+      lfo.stop(stopT);
+    }
+
+    function scheduleBackground(){
+      // D Dorian-ish scale (D E F G A B C)
+      const scale = [293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25, 587.33];
+      // A short medieval-ish motif (steps refer to scale indices)
+      const motif = [0,2,3,4,3,2,1,0, 0,1,2,3,2,1,0,0, 4,5,4,3,2,3,4,3];
+      const beats = 60 / bg.tempo;
+
+      const now = audioCtx.currentTime;
+      const lookAhead = 0.18;
+      const scheduleAhead = 0.7;
+      if(bg.nextNoteTime < now) bg.nextNoteTime = now + 0.05;
+
+      while(bg.nextNoteTime < now + scheduleAhead){
+        const step = motif[bg.step % motif.length];
+        const freq = scale[step];
+        // Mix durations for a simple dance feel
+        const isLong = (bg.step % 8 === 7) || (bg.step % 12 === 11);
+        const dur = (isLong ? 1.5 : 1.0) * beats;
+        makeFluteVoice(bg.nextNoteTime, freq, dur * 0.92);
+        bg.nextNoteTime += dur;
+        bg.step++;
+      }
     }
 
     async function startAudio(){
       if(audioCtx) return;
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      gain = audioCtx.createGain();
-      osc = audioCtx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.value = 220;
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      setVolume(state.volume);
-      osc.start();
+      master = audioCtx.createGain();
+      master.gain.value = state.volume;
+      master.connect(audioCtx.destination);
+
+      // Kick off scheduler
+      bg.nextNoteTime = audioCtx.currentTime + 0.08;
+      bg.step = 0;
+      bg.intervalId = setInterval(scheduleBackground, 100);
+      scheduleBackground();
     }
 
     function stopAudio(){
       if(!audioCtx) return;
-      try{ osc.stop(); }catch{}
-      osc = null;
-      gain = null;
+      if(bg.intervalId) clearInterval(bg.intervalId);
+      bg.intervalId = null;
+      try{ master.disconnect(); }catch{}
+      master = null;
       audioCtx.close();
       audioCtx = null;
     }
@@ -195,7 +287,7 @@
       if(!audioCtx){
         await startAudio();
         toggleBtn.textContent = 'Stop';
-        audioState.textContent = '(playing tone)';
+        audioState.textContent = '(medieval flute playing)';
       } else {
         stopAudio();
         toggleBtn.textContent = 'Start';
@@ -311,7 +403,7 @@
       const hand = armHandPos();
       const sling = slingEndPos(hand);
       const grabPoint = {x: (hand.x + sling.x)/2, y: (hand.y + sling.y)/2};
-      if(dist(p, grabPoint) < 55){
+      if(dist(p, grabPoint) < 78){
         state.dragging = true;
         state.dragStart = p;
       }
@@ -321,8 +413,12 @@
       const p = getPointer(e);
       state.pointer = p;
       if(!state.dragging || state.fired) return;
-      // Map horizontal pullback to arm angle
-      const pull = Math.max(0, Math.min(1, (state.pivot.x - p.x) / 220));
+      // Map pullback to arm angle (easier to reach 100% preload)
+      // Use both horizontal (left drag) and vertical (down drag) to accumulate pull.
+      const dx = Math.max(0, (state.pivot.x - p.x));
+      const dy = Math.max(0, (p.y - state.pivot.y));
+      // Smaller denominators => easier to hit 1.0
+      const pull = Math.max(0, Math.min(1, (dx/130) * 0.75 + (dy/170) * 0.45));
       state.armAngle = state.restAngle + (state.pullAngle - state.restAngle) * pull;
       placeBallAtSling();
     });
